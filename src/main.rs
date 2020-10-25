@@ -188,22 +188,13 @@ unsafe fn on_create(hwnd : windef::HWND) -> isize {
 
 //
 // Hit test the frame for resizing and moving.
-unsafe fn hit_test_nca(hwnd : windef::HWND, wparam : usize, lparam : isize) -> isize {
-
-    let mouse_loc = windef::POINT {
-        x : windowsx::GET_X_LPARAM(lparam),
-        y : windowsx::GET_Y_LPARAM(lparam),
-    };
-
-    let mut window_rect = mem::zeroed();
+unsafe fn hit_test_nca(mouse_loc : &windef::POINT, window_rect : &windef::RECT, hwnd : windef::HWND, wparam : usize, lparam : isize) -> isize {
     let mut frame_rect = mem::zeroed();
 
-    winuser::GetWindowRect(hwnd, &mut window_rect);
     winuser::AdjustWindowRectEx(&mut frame_rect,
                                 winuser::WS_OVERLAPPEDWINDOW & !winuser::WS_CAPTION,
                                 0,
                                 0);
-
 
     let mut u_row = 1;
     let mut u_col = 1;
@@ -232,9 +223,26 @@ unsafe fn hit_test_nca(hwnd : windef::HWND, wparam : usize, lparam : isize) -> i
         [winuser::HTBOTTOMLEFT, winuser::HTBOTTOM, winuser::HTBOTTOMRIGHT],
     ];
 
-    position_table[u_row][u_col]
+        position_table[u_row][u_col]
 
 }
+
+unsafe fn on_up_nc(hwnd : windef::HWND, lparam : isize) -> isize {
+
+    println!("hit");
+    //these are screen points
+
+    if CURRENT_BUTTON.unwrap() == PLAY_BUTTON {
+        CURRENT_BUTTON = Some(PAUSE_BUTTON);
+    } else {
+        CURRENT_BUTTON = Some(PLAY_BUTTON);
+    }
+
+    winuser::RedrawWindow(hwnd, null_mut(), null_mut(), winuser::RDW_INVALIDATE | winuser::RDW_ERASE);
+
+    0
+}
+
 
 unsafe fn dwm_check(hwnd : windef::HWND,
                     msg : u32,
@@ -243,10 +251,27 @@ unsafe fn dwm_check(hwnd : windef::HWND,
 
 
     let mut lresult : isize = 0;
+    let mut window_rect : windef::RECT = mem::zeroed();
+
+    winuser::GetWindowRect(hwnd, &mut window_rect);
+
+    let mouse_loc = windef::POINT {
+        x : windowsx::GET_X_LPARAM(lparam),
+        y : windowsx::GET_Y_LPARAM(lparam),
+    };
+
+    let cx = window_rect.right - window_rect.left;
+
+    if mouse_loc.x > (window_rect.left + 64) && mouse_loc.x < (window_rect.left + 96) &&
+        (mouse_loc.y < (window_rect.top + 37) && mouse_loc.y > (window_rect.top +5)){
+        return winuser::HTBORDER;
+    }
+
+
     dwmapi::DwmDefWindowProc(hwnd, msg, wparam, lparam, &mut lresult);
 
     if lresult == 0 {
-        return hit_test_nca(hwnd, wparam, lparam);
+        return hit_test_nca(&mouse_loc, &window_rect, hwnd, wparam, lparam);
     }
 
     lresult
@@ -260,16 +285,22 @@ unsafe fn on_paint(hwnd : windef::HWND) -> isize {
     winuser::GetClientRect(hwnd, &mut client_rect);
 
     let cx = client_rect.right - client_rect.top;
-    let cy = client_rect.bottom - client_rect.top;
 
     winuser::BeginPaint(hwnd, &mut ps);
     let hicon = mem::transmute::<u64, windef::HICON>(CURRENT_BUTTON.unwrap());
     //wingdi::SetBkMode(ps.hdc, wingdi::TRANSPARENT as i32);
-    winuser::DrawIconEx(ps.hdc, cx/2 - 32, 5, hicon, 32, 32, 0, null_mut(), 0x3);
+    winuser::DrawIconEx(ps.hdc, 64, 5, hicon, 32, 32, 0, null_mut(), 0x3);
     winuser::EndPaint(hwnd, &ps);
 
     0
 }
+
+unsafe fn on_stop_resize(hwnd : windef::HWND) -> isize {
+
+    winuser::RedrawWindow(hwnd, null_mut(), null_mut(), winuser::RDW_INVALIDATE | winuser::RDW_ERASE);
+    0
+}
+
 
 unsafe extern "system" fn window_message_handler(hwnd : windef::HWND,
                                                  msg : u32,
@@ -286,6 +317,8 @@ unsafe extern "system" fn window_message_handler(hwnd : windef::HWND,
         winuser::WM_ACTIVATE => on_activate(hwnd),
         winuser::WM_NCCALCSIZE if wparam == 1 => on_nccalcsize(lparam),
         winuser::WM_PAINT => on_paint(hwnd),
+        winuser::WM_NCLBUTTONUP => on_up_nc(hwnd, lparam),
+        winuser::WM_EXITSIZEMOVE => on_stop_resize(hwnd),
         winuser::WM_NCHITTEST => dwm_check(hwnd, msg, wparam, lparam),
         _ => winuser::DefWindowProcW(hwnd, msg, wparam, lparam),
     }
