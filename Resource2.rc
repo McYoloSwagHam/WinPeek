@@ -1,0 +1,5 @@
+#define ShapesIcon 91
+#define LmaoIcon 101
+
+ShapesIcon ICON "lol.ico"
+LmaoIcon ICON "lmao.ico"

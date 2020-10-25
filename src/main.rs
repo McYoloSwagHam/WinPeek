@@ -1,16 +1,25 @@
 mod util;
 use std::ptr::null_mut;
 use std::mem::{self, size_of, uninitialized};
-use winapi::um::{winuser, wingdi, uxtheme, dwmapi};
-use winapi::shared::{windef, windowsx};
+use winapi::um::{commctrl, libloaderapi, winuser, wingdi, uxtheme, dwmapi};
+use winapi::shared::{minwindef, windef, windowsx};
 use winapi::ctypes::c_void;
 use std::io::Error;
+use once_cell::unsync::Lazy;
+
+// for fucks sake rust globals suck ass
+static mut PLAY_BUTTON : u64 = 0;
+static mut PAUSE_BUTTON : u64 = 0;
+static mut CURRENT_BUTTON : Option<u64> = None;
+
 
 //Little endian set the last byte
 // R  G  B  A
 // 00 00 00 ff
-const MAKE_SOLID : u32 = 0xff000000;
-
+const LEFT_EXTEND : i32 = 2;
+const TOP_EXTEND : i32 = 40;
+const RIGHT_EXTEND : i32 = 2;
+const BOTTOM_EXTEND : i32 = 2;
 
 
 // Application Cood
@@ -52,7 +61,7 @@ unsafe fn draw_transparent_parts(window_handle : windef::HWND) {
     bitmap_header.biSize = size_of::<wingdi::BITMAPINFOHEADER>() as u32;
     bitmap_header.biBitCount = 32;
     bitmap_header.biWidth = window_width;
-    bitmap_header.biHeight = window_height + 5;
+    bitmap_header.biHeight = window_height;
     bitmap_header.biPlanes = 1;
 
     let mut bitmap_info : wingdi::BITMAPINFO = mem::zeroed();
@@ -82,12 +91,13 @@ unsafe fn draw_transparent_parts(window_handle : windef::HWND) {
     wingdi::BitBlt(compat_dc, 0, 0, window_width, window_height, general_dc, 0, 0, wingdi::SRCCOPY);
 
     //these are the pixels we are given access to
-    let pixels : *mut u32 = mem::transmute::<*mut c_void, *mut u32>(bits);
+    let pixels : *mut u32 = mem::transmute::<_, *mut u32>(bits);
 
     for i in 0..window_height {
         for j in 0..window_width {
             //rippo pointer math
-            *pixels.add((i * window_width + j) as usize) &= 0x00ffffff;
+            //*pixels.add((i * window_width + j) as usize) &= 0xffffffff;
+            *pixels.add((i * window_width + j) as usize) = 0xffffffff;
         }
     }
 
@@ -111,20 +121,24 @@ unsafe fn draw_transparent_parts(window_handle : windef::HWND) {
 
 
     //Copy CompatDC to actual scren
-    let ret_val = winuser::UpdateLayeredWindow(window_handle,
-                                 general_dc,
-                                 null_mut(),
-                                 &mut size,
-                                 compat_dc,
-                                 &mut point,
-                                 0,
-                                 &mut blend_function,
-                                 winuser::ULW_ALPHA);
+    //let ret_val = winuser::UpdateLayeredWindow(window_handle,
+    //                             general_dc,
+    //                             null_mut(),
+    //                             &mut size,
+    //                             compat_dc,
+    //                             &mut point,
+    //                             0,
+    //                             &mut blend_function,
+    //                             winuser::ULW_ALPHA);
 
-    println!("retval {}", ret_val);
-    if ret_val == 0 {
-        println!("last_error {}", Error::last_os_error());
-    }
+    //println!("retval {}", ret_val);
+    //if ret_val == 0 {
+    //    println!("last_error {}", Error::last_os_error());
+    //}
+
+    winuser::ReleaseDC(window_handle, compat_dc);
+    winuser::ReleaseDC(window_handle, general_dc);
+    wingdi::DeleteObject(bitmap_handle as *mut c_void);
 
 }
 
@@ -132,10 +146,10 @@ unsafe fn draw_transparent_parts(window_handle : windef::HWND) {
 unsafe fn on_activate(hwnd : windef::HWND) -> isize {
 
     let margins = uxtheme::MARGINS {
-        cxLeftWidth : 2,
-        cxRightWidth : 2,
-        cyBottomHeight : 2,
-        cyTopHeight : 27,
+        cxLeftWidth : LEFT_EXTEND,
+        cxRightWidth : RIGHT_EXTEND,
+        cyBottomHeight : BOTTOM_EXTEND,
+        cyTopHeight : TOP_EXTEND,
     };
 
     dwmapi::DwmExtendFrameIntoClientArea(hwnd, &margins);
@@ -167,6 +181,7 @@ unsafe fn on_create(hwnd : windef::HWND) -> isize {
                           rect_width, rect_height,
                           winuser::SWP_FRAMECHANGED);
 
+    winuser::SetLayeredWindowAttributes(hwnd, 0x00696900, 0xff, winuser::LWA_COLORKEY);
     0
 
 }
@@ -195,19 +210,19 @@ unsafe fn hit_test_nca(hwnd : windef::HWND, wparam : usize, lparam : isize) -> i
     let mut is_resize = false;
 
     //we're just checking which side to return
-    if mouse_loc.y >= window_rect.top && mouse_loc.y < window_rect.top + 20 {
+    if mouse_loc.y >= window_rect.top && mouse_loc.y < window_rect.top + TOP_EXTEND {
         //check if the button is closer to bottom of top or top of top
         is_resize = mouse_loc.y < (window_rect.top - frame_rect.top);
         u_row = 0;
     } 
-    else if mouse_loc.y < window_rect.bottom && mouse_loc.y >= window_rect.bottom - 2 {
+    else if mouse_loc.y < window_rect.bottom && mouse_loc.y >= window_rect.bottom - BOTTOM_EXTEND{
         u_row = 2;
     }
 
-    if mouse_loc.x >= window_rect.left && mouse_loc.x < window_rect.left + 2 {
+    if mouse_loc.x >= window_rect.left && mouse_loc.x < window_rect.left + LEFT_EXTEND {
         u_col = 0;
     } 
-    else if mouse_loc.x < window_rect.right && mouse_loc.x >= window_rect.right - 2 {
+    else if mouse_loc.x < window_rect.right && mouse_loc.x >= window_rect.right - RIGHT_EXTEND {
         u_col = 2;
     }
 
@@ -237,6 +252,25 @@ unsafe fn dwm_check(hwnd : windef::HWND,
     lresult
 }
 
+unsafe fn on_paint(hwnd : windef::HWND) -> isize {
+
+    let mut ps :winuser::PAINTSTRUCT = mem::zeroed();
+    let mut client_rect : windef::RECT = mem::zeroed();
+
+    winuser::GetClientRect(hwnd, &mut client_rect);
+
+    let cx = client_rect.right - client_rect.top;
+    let cy = client_rect.bottom - client_rect.top;
+
+    winuser::BeginPaint(hwnd, &mut ps);
+    let hicon = mem::transmute::<u64, windef::HICON>(CURRENT_BUTTON.unwrap());
+    //wingdi::SetBkMode(ps.hdc, wingdi::TRANSPARENT as i32);
+    winuser::DrawIconEx(ps.hdc, cx/2 - 32, 5, hicon, 32, 32, 0, null_mut(), 0x3);
+    winuser::EndPaint(hwnd, &ps);
+
+    0
+}
+
 unsafe extern "system" fn window_message_handler(hwnd : windef::HWND,
                                                  msg : u32,
                                                  wparam : usize,
@@ -251,6 +285,7 @@ unsafe extern "system" fn window_message_handler(hwnd : windef::HWND,
         winuser::WM_CREATE => on_create(hwnd),
         winuser::WM_ACTIVATE => on_activate(hwnd),
         winuser::WM_NCCALCSIZE if wparam == 1 => on_nccalcsize(lparam),
+        winuser::WM_PAINT => on_paint(hwnd),
         winuser::WM_NCHITTEST => dwm_check(hwnd, msg, wparam, lparam),
         _ => winuser::DefWindowProcW(hwnd, msg, wparam, lparam),
     }
@@ -264,6 +299,9 @@ fn main() {
     let class_name = util::to_wstring("WinPeekClass");
     let window_name = util::to_wstring("WinPeek");
 
+    let brush = unsafe {
+            wingdi::CreateSolidBrush(0x00696900)
+    };
 
     let wnd_class = winuser::WNDCLASSEXW {
         cbSize : size_of::<winuser::WNDCLASSEXW>() as u32,
@@ -274,7 +312,7 @@ fn main() {
         hInstance : null_mut(),
         hIcon : null_mut(),
         hCursor : null_mut(),
-        hbrBackground : null_mut(),
+        hbrBackground : brush,
         lpszMenuName : null_mut(),
         lpszClassName : class_name.as_ptr(),
         hIconSm : null_mut(),
@@ -287,7 +325,7 @@ fn main() {
     };
 
     let window_handle = unsafe {
-        winuser::CreateWindowExW(winuser::WS_EX_NOREDIRECTIONBITMAP,
+        winuser::CreateWindowExW(winuser::WS_EX_LAYERED,
                              class_name.as_ptr(),
                              window_name.as_ptr(),
                              winuser::WS_OVERLAPPEDWINDOW, 
@@ -303,9 +341,28 @@ fn main() {
 
     unsafe {
         winuser::ShowWindow(window_handle, winuser::SW_SHOW);
+        let base = libloaderapi::GetModuleHandleW(null_mut());
+        PLAY_BUTTON =
+            mem::transmute::<*mut c_void, u64>(winuser::LoadImageW(base,
+            mem::transmute::<*mut i8, *const u16>(winuser::MAKEINTRESOURCEA(91)),
+            winuser::IMAGE_ICON,
+            128,
+            128,
+            0));
+        
+            
+
+        PAUSE_BUTTON =
+            mem::transmute::<*mut c_void, u64>(winuser::LoadImageW(base,
+            mem::transmute::<*mut i8, *const u16>(winuser::MAKEINTRESOURCEA(101)),
+            winuser::IMAGE_ICON,
+            128,
+            128,
+            0));
+
+        CURRENT_BUTTON = Some(PLAY_BUTTON);
+
     }
-
-
 
     loop {
         if !handle_message(window_handle) {

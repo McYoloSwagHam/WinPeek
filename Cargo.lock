@@ -4,7 +4,30 @@
 name = "WinPeek"
 version = "0.1.0"
 dependencies = [
+ "once_cell",
  "winapi",
+ "winres",
+]
+
+[[package]]
+name = "once_cell"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "260e51e7efe62b592207e9e13a68e43692a7a279171d6ba57abd208bf23645ad"
+
+[[package]]
+name = "serde"
+version = "1.0.117"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b88fa983de7720629c9387e9f517353ed404164b1e482c970a90c1a4aaf7dc1a"
+
+[[package]]
+name = "toml"
+version = "0.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75cf45bb0bef80604d001caaec0d09da99611b3c0fd39d3080468875cdb65645"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -28,3 +51,12 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
+
+[[package]]
+name = "winres"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff4fb510bbfe5b8992ff15f77a2e6fe6cf062878f0eda00c0f44963a807ca5dc"
+dependencies = [
+ "toml",
+]
