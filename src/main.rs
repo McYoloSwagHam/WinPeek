@@ -1,4 +1,5 @@
 mod util;
+mod capture;
 use std::ptr::null_mut;
 use std::mem::{self, size_of, uninitialized};
 use winapi::um::{commctrl, libloaderapi, winuser, wingdi, uxtheme, dwmapi};
@@ -288,7 +289,6 @@ unsafe fn on_paint(hwnd : windef::HWND) -> isize {
 
     winuser::BeginPaint(hwnd, &mut ps);
     let hicon = mem::transmute::<u64, windef::HICON>(CURRENT_BUTTON.unwrap());
-    //wingdi::SetBkMode(ps.hdc, wingdi::TRANSPARENT as i32);
     winuser::DrawIconEx(ps.hdc, 64, 5, hicon, 32, 32, 0, null_mut(), 0x3);
     winuser::EndPaint(hwnd, &ps);
 
