@@ -2,17 +2,11 @@ mod util;
 mod capture;
 use std::ptr::null_mut;
 use std::mem::{self, size_of, uninitialized};
-use winapi::um::{commctrl, libloaderapi, winuser, wingdi, uxtheme, dwmapi};
-use winapi::shared::{minwindef, windef, windowsx};
+use winapi::um::{libloaderapi, winuser, wingdi, uxtheme, dwmapi};
+use winapi::shared::{windef, windowsx};
 use winapi::ctypes::c_void;
-use std::io::Error;
-use once_cell::unsync::Lazy;
-
-// for fucks sake rust globals suck ass
-static mut PLAY_BUTTON : u64 = 0;
-static mut PAUSE_BUTTON : u64 = 0;
-static mut CURRENT_BUTTON : Option<u64> = None;
-
+use std::sync::{Arc, Mutex};
+use std::mem::transmute as tcast;
 
 //Little endian set the last byte
 // R  G  B  A
@@ -21,6 +15,48 @@ const LEFT_EXTEND : i32 = 2;
 const TOP_EXTEND : i32 = 40;
 const RIGHT_EXTEND : i32 = 2;
 const BOTTOM_EXTEND : i32 = 2;
+
+
+pub struct WindowState {
+    play_button : windef::HICON,
+    pause_button: windef::HICON,
+    current_button : windef::HICON,
+}
+
+
+impl WindowState {
+ 
+    pub unsafe fn new() -> WindowState {
+
+        let base = libloaderapi::GetModuleHandleW(null_mut());
+
+        let play_button =
+            winuser::LoadImageW(base,
+            mem::transmute::<*mut i8, *const u16>(winuser::MAKEINTRESOURCEA(91)),
+            winuser::IMAGE_ICON,
+            128,
+            128,
+            0) as windef::HICON;
+        
+            
+
+        let pause_button =
+            winuser::LoadImageW(base,
+            mem::transmute::<*mut i8, *const u16>(winuser::MAKEINTRESOURCEA(101)),
+            winuser::IMAGE_ICON,
+            128,
+            128,
+            0) as windef::HICON;
+
+        WindowState {
+            play_button,
+            pause_button,
+            current_button : play_button,
+        }
+
+    }
+
+}
 
 
 // Application Cood
@@ -164,7 +200,7 @@ unsafe fn on_nccalcsize(_ : isize) -> isize {
     0
 }
 
-unsafe fn on_create(hwnd : windef::HWND) -> isize {
+unsafe fn on_create(hwnd : windef::HWND, lparam : isize) -> isize {
 
     let mut create_rect : windef::RECT = mem::zeroed();
 
@@ -182,6 +218,13 @@ unsafe fn on_create(hwnd : windef::HWND) -> isize {
                           rect_width, rect_height,
                           winuser::SWP_FRAMECHANGED);
 
+
+    let create_struct = tcast::<_, &winuser::CREATESTRUCTW>(lparam);
+
+    let window_state_ptr = create_struct.lpCreateParams;
+
+    //Store &mut WindowState in window UserData.
+    winuser::SetWindowLongPtrW(hwnd, winuser::GWLP_USERDATA, window_state_ptr as isize);
     winuser::SetLayeredWindowAttributes(hwnd, 0x00696900, 0xff, winuser::LWA_COLORKEY);
     0
 
@@ -230,13 +273,13 @@ unsafe fn hit_test_nca(mouse_loc : &windef::POINT, window_rect : &windef::RECT, 
 
 unsafe fn on_up_nc(hwnd : windef::HWND, lparam : isize) -> isize {
 
-    println!("hit");
+    let window_state = tcast::<_, &mut WindowState>(winuser::GetWindowLongPtrW(hwnd, winuser::GWLP_USERDATA));
     //these are screen points
 
-    if CURRENT_BUTTON.unwrap() == PLAY_BUTTON {
-        CURRENT_BUTTON = Some(PAUSE_BUTTON);
+    if window_state.current_button == window_state.play_button {
+        window_state.current_button = window_state.pause_button;
     } else {
-        CURRENT_BUTTON = Some(PLAY_BUTTON);
+        window_state.current_button = window_state.play_button;
     }
 
     winuser::RedrawWindow(hwnd, null_mut(), null_mut(), winuser::RDW_INVALIDATE | winuser::RDW_ERASE);
@@ -280,6 +323,8 @@ unsafe fn dwm_check(hwnd : windef::HWND,
 
 unsafe fn on_paint(hwnd : windef::HWND) -> isize {
 
+    let window_state = tcast::<_, &mut WindowState>(winuser::GetWindowLongPtrW(hwnd, winuser::GWLP_USERDATA));
+
     let mut ps :winuser::PAINTSTRUCT = mem::zeroed();
     let mut client_rect : windef::RECT = mem::zeroed();
 
@@ -287,9 +332,10 @@ unsafe fn on_paint(hwnd : windef::HWND) -> isize {
 
     let cx = client_rect.right - client_rect.top;
 
+    
+
     winuser::BeginPaint(hwnd, &mut ps);
-    let hicon = mem::transmute::<u64, windef::HICON>(CURRENT_BUTTON.unwrap());
-    winuser::DrawIconEx(ps.hdc, 64, 5, hicon, 32, 32, 0, null_mut(), 0x3);
+    winuser::DrawIconEx(ps.hdc, 64, 5, window_state.current_button, 32, 32, 0, null_mut(), 0x3);
     winuser::EndPaint(hwnd, &ps);
 
     0
@@ -313,7 +359,7 @@ unsafe extern "system" fn window_message_handler(hwnd : windef::HWND,
     //println!("lresult : {}", lresult);
 
     match msg {
-        winuser::WM_CREATE => on_create(hwnd),
+        winuser::WM_CREATE => on_create(hwnd, lparam),
         winuser::WM_ACTIVATE => on_activate(hwnd),
         winuser::WM_NCCALCSIZE if wparam == 1 => on_nccalcsize(lparam),
         winuser::WM_PAINT => on_paint(hwnd),
@@ -327,8 +373,6 @@ unsafe extern "system" fn window_message_handler(hwnd : windef::HWND,
 }
 
 fn main() {
-    println!("Hello, world!");
-
     let class_name = util::to_wstring("WinPeekClass");
     let window_name = util::to_wstring("WinPeek");
 
@@ -357,6 +401,8 @@ fn main() {
         }
     };
 
+    let mut window_state = unsafe { WindowState::new() };
+
     let window_handle = unsafe {
         winuser::CreateWindowExW(winuser::WS_EX_LAYERED,
                              class_name.as_ptr(),
@@ -369,31 +415,11 @@ fn main() {
                              null_mut(),
                              null_mut(),
                              null_mut(),
-                             null_mut())
+                             mem::transmute::<&mut WindowState, *mut c_void>(&mut window_state))
     };
 
     unsafe {
         winuser::ShowWindow(window_handle, winuser::SW_SHOW);
-        let base = libloaderapi::GetModuleHandleW(null_mut());
-        PLAY_BUTTON =
-            mem::transmute::<*mut c_void, u64>(winuser::LoadImageW(base,
-            mem::transmute::<*mut i8, *const u16>(winuser::MAKEINTRESOURCEA(91)),
-            winuser::IMAGE_ICON,
-            128,
-            128,
-            0));
-        
-            
-
-        PAUSE_BUTTON =
-            mem::transmute::<*mut c_void, u64>(winuser::LoadImageW(base,
-            mem::transmute::<*mut i8, *const u16>(winuser::MAKEINTRESOURCEA(101)),
-            winuser::IMAGE_ICON,
-            128,
-            128,
-            0));
-
-        CURRENT_BUTTON = Some(PLAY_BUTTON);
 
     }
 
