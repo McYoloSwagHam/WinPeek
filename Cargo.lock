@@ -5,7 +5,9 @@ name = "WinPeek"
 version = "0.1.0"
 dependencies = [
  "captrs",
+ "gif",
  "once_cell",
+ "wfd",
  "winapi",
  "winres",
 ]
@@ -21,6 +23,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "color_quant"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
+
+[[package]]
 name = "dxgcap"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -28,6 +36,16 @@ checksum = "98e45d439a91a94a00aa10318c2a9ec09d0cf9b9d893308d2e200bf94da50cb0"
 dependencies = [
  "winapi",
  "wio",
+]
+
+[[package]]
+name = "gif"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02efba560f227847cb41463a7395c514d127d4f74fff12ef0137fff1b84b96c4"
+dependencies = [
+ "color_quant",
+ "weezl",
 ]
 
 [[package]]
@@ -61,6 +79,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75cf45bb0bef80604d001caaec0d09da99611b3c0fd39d3080468875cdb65645"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "weezl"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8795d6e0e17485803cc10ef126bb8c0d59b7c61b219d66cfe0b3216dd0e8580a"
+
+[[package]]
+name = "wfd"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26dc321f50616fda50ecd30cc7330c2eff16c299e9df0ae8af1760971ce8b1d3"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]

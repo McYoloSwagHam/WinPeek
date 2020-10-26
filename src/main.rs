@@ -5,22 +5,32 @@ use std::mem::{self, size_of, uninitialized};
 use winapi::um::{libloaderapi, winuser, wingdi, uxtheme, dwmapi};
 use winapi::shared::{windef, windowsx};
 use winapi::ctypes::c_void;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use std::mem::transmute as tcast;
+use std::fs::rename;
+use std::env::temp_dir;
+use captrs;
+use wfd;
 
 //Little endian set the last byte
 // R  G  B  A
 // 00 00 00 ff
-const LEFT_EXTEND : i32 = 2;
-const TOP_EXTEND : i32 = 40;
-const RIGHT_EXTEND : i32 = 2;
-const BOTTOM_EXTEND : i32 = 2;
+pub const LEFT_EXTEND : i32 = 2;
+pub const TOP_EXTEND : i32 = 40;
+pub const RIGHT_EXTEND : i32 = 2;
+pub const BOTTOM_EXTEND : i32 = 2;
 
+
+// This atomic bool that tells the renderer loop to stop
+// captrs is sync so, it needs to run in another thread
+// in a LOOP and check every iter whether to stop or not.
+pub static SHOULD_STOP : AtomicBool = AtomicBool::new(false);
 
 pub struct WindowState {
     play_button : windef::HICON,
     pause_button: windef::HICON,
     current_button : windef::HICON,
+    capturer : Option<captrs::Capturer>,
 }
 
 
@@ -52,6 +62,7 @@ impl WindowState {
             play_button,
             pause_button,
             current_button : play_button,
+            capturer : None,
         }
 
     }
@@ -278,8 +289,41 @@ unsafe fn on_up_nc(hwnd : windef::HWND, lparam : isize) -> isize {
 
     if window_state.current_button == window_state.play_button {
         window_state.current_button = window_state.pause_button;
+
+        capture::start_recording(hwnd, window_state);
+
     } else {
         window_state.current_button = window_state.play_button;
+
+        //Stop Recording
+        //Set the Class value to None
+        window_state.capturer = None;
+
+        SHOULD_STOP.store(true, Ordering::Relaxed);
+
+        //loop while the other thread hasn't responded.
+        while SHOULD_STOP.load(Ordering::Relaxed) {
+
+        }
+
+        let mut temp_path = temp_dir();
+        temp_path.push("recording.buffer");
+
+        let params = wfd::DialogParams {
+            title: "Save as",
+            file_types: vec![("GIF", "*.gif")],
+            default_extension: "gif",
+            ..Default::default()
+        };
+
+        let dialog_result = wfd::save_dialog(params).unwrap();
+
+        let target_path = dialog_result.selected_file_path;
+
+        //println!("temp_path {:?}\ntarget_path : {:?}", temp_path, target_path);
+        rename(temp_path, target_path).unwrap();
+        
+
     }
 
     winuser::RedrawWindow(hwnd, null_mut(), null_mut(), winuser::RDW_INVALIDATE | winuser::RDW_ERASE);
@@ -306,7 +350,7 @@ unsafe fn dwm_check(hwnd : windef::HWND,
 
     let cx = window_rect.right - window_rect.left;
 
-    if mouse_loc.x > (window_rect.left + 64) && mouse_loc.x < (window_rect.left + 96) &&
+    if mouse_loc.x > (window_rect.left + 64) && mouse_loc.x < (window_rect.left + 112) &&
         (mouse_loc.y < (window_rect.top + 37) && mouse_loc.y > (window_rect.top +5)){
         return winuser::HTBORDER;
     }
@@ -329,11 +373,6 @@ unsafe fn on_paint(hwnd : windef::HWND) -> isize {
     let mut client_rect : windef::RECT = mem::zeroed();
 
     winuser::GetClientRect(hwnd, &mut client_rect);
-
-    let cx = client_rect.right - client_rect.top;
-
-    
-
     winuser::BeginPaint(hwnd, &mut ps);
     winuser::DrawIconEx(ps.hdc, 64, 5, window_state.current_button, 32, 32, 0, null_mut(), 0x3);
     winuser::EndPaint(hwnd, &ps);
@@ -373,6 +412,10 @@ unsafe extern "system" fn window_message_handler(hwnd : windef::HWND,
 }
 
 fn main() {
+
+    //High res ICONs and High res Dialogs
+    unsafe { winuser::SetProcessDPIAware(); }
+
     let class_name = util::to_wstring("WinPeekClass");
     let window_name = util::to_wstring("WinPeek");
 
