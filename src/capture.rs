@@ -1,4 +1,3 @@
-use crate::WindowState;
 use std::env::{temp_dir};
 use std::mem;
 use std::mem::transmute as tcast;
@@ -17,13 +16,16 @@ const FRAME_COUNT : usize = 10;
 
 // Start the recording here somehow
 // and also start streaming to tmp file?
-pub unsafe fn start_recording(hwnd : windef::HWND, window_state : &mut WindowState) {
+pub unsafe fn start_recording(hwnd : windef::HWND) {
 
     //Create a temp file to which we stream the video data
     //Then if the user decides to save, we move that file to the loc
     //otherwise we just delete the temporary file.
     let mut temp_path = temp_dir();
 
+    //cast hwnd to u64 because it actually is Send + Sync
+    //since even though by typedef it is a pointer it is
+    //actually an integer handle, so it can be copied.
     let fake_hwnd : u64 = tcast::<windef::HWND, u64>(hwnd);
 
     temp_path.push("recording_buffer.mp4");
@@ -133,7 +135,7 @@ pub unsafe fn start_recording(hwnd : windef::HWND, window_state : &mut WindowSta
                 };
 
                 frames[frame_count] = frame;
-                thread::sleep_ms(80);
+                thread::sleep(Duration::from_millis(80));
             }
 
             transmitter.send(frames).unwrap();

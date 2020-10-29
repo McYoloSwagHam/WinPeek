@@ -1,15 +1,14 @@
 mod util;
 mod capture;
 use std::ptr::null_mut;
-use std::mem::{self, size_of, uninitialized};
+use std::mem::{self, size_of};
 use winapi::um::{libloaderapi, winuser, wingdi, uxtheme, dwmapi};
 use winapi::shared::{windef, windowsx};
 use winapi::ctypes::c_void;
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
+use std::sync::{atomic::{AtomicBool, Ordering}};
 use std::mem::transmute as tcast;
 use std::fs::rename;
 use std::env::temp_dir;
-use captrs;
 use wfd;
 
 //Little endian set the last byte
@@ -20,9 +19,14 @@ pub const TOP_EXTEND : i32 = 40;
 pub const RIGHT_EXTEND : i32 = 2;
 pub const BOTTOM_EXTEND : i32 = 2;
 
+//This is the color key we use to show that something
+//is transparent using SetLayeredWindowAttributes
+const TRANSPARENCY_COLOR : u32 = 0x00696900;
+const ICON_SIZE : i32 = 128;
+
 
 // This atomic bool that tells the renderer loop to stop
-// captrs is sync so, it needs to run in another thread
+// scrap is sync so, it needs to run in another thread
 // in a LOOP and check every iter whether to stop or not.
 pub static SHOULD_STOP : AtomicBool = AtomicBool::new(false);
 
@@ -30,9 +34,7 @@ pub struct WindowState {
     play_button : windef::HICON,
     pause_button: windef::HICON,
     current_button : windef::HICON,
-    capturer : Option<captrs::Capturer>,
 }
-
 
 impl WindowState {
  
@@ -42,27 +44,26 @@ impl WindowState {
 
         let play_button =
             winuser::LoadImageW(base,
-            mem::transmute::<*mut i8, *const u16>(winuser::MAKEINTRESOURCEA(91)),
+            tcast::<*mut i8, *const u16>(winuser::MAKEINTRESOURCEA(91)),
             winuser::IMAGE_ICON,
-            128,
-            128,
+            ICON_SIZE,
+            ICON_SIZE,
             0) as windef::HICON;
         
             
 
         let pause_button =
             winuser::LoadImageW(base,
-            mem::transmute::<*mut i8, *const u16>(winuser::MAKEINTRESOURCEA(101)),
+            tcast::<*mut i8, *const u16>(winuser::MAKEINTRESOURCEA(101)),
             winuser::IMAGE_ICON,
-            128,
-            128,
+            ICON_SIZE,
+            ICON_SIZE,
             0) as windef::HICON;
 
         WindowState {
             play_button,
             pause_button,
             current_button : play_button,
-            capturer : None,
         }
 
     }
@@ -70,126 +71,19 @@ impl WindowState {
 }
 
 
-// Application Cood
-
+// Message Loop
 fn handle_message( window_handle : windef::HWND) -> bool {
     unsafe {
-        let mut message : winuser::MSG = uninitialized();
-        if winuser::GetMessageW( &mut message as *mut winuser::MSG, window_handle, 0, 0 ) > 0 {
-            winuser::TranslateMessage( &message as *const winuser::MSG );
-            winuser::DispatchMessageW( &message as *const winuser::MSG );
+        let mut message = mem::MaybeUninit::<winuser::MSG>::uninit();
+        if winuser::GetMessageW(message.as_mut_ptr(), window_handle, 0, 0 ) > 0 {
+            winuser::TranslateMessage(message.as_ptr());
+            winuser::DispatchMessageW(message.as_ptr());
             true
         } else {
             false
         }
     }
 }
-
-
-//AlphaKey on Transparent windows affects the border
-//we want the borders to remain opaque
-unsafe fn draw_transparent_parts(window_handle : windef::HWND) {
-
-    let general_dc = winuser::GetDC(window_handle);
-
-    let mut window_rect : windef::RECT = mem::zeroed();
-
-    winuser::GetClientRect(window_handle, &mut window_rect as *mut windef::RECT);
-
-    let window_width = window_rect.right - window_rect.left;
-    let window_height = window_rect.bottom - window_rect.top;
-
-    if general_dc == null_mut() {
-        panic!("Couldn't get DC for window");
-    }
-
-    //zero everything
-    let mut bitmap_header : wingdi::BITMAPINFOHEADER = mem::zeroed();
-
-    bitmap_header.biSize = size_of::<wingdi::BITMAPINFOHEADER>() as u32;
-    bitmap_header.biBitCount = 32;
-    bitmap_header.biWidth = window_width;
-    bitmap_header.biHeight = window_height;
-    bitmap_header.biPlanes = 1;
-
-    let mut bitmap_info : wingdi::BITMAPINFO = mem::zeroed();
-
-    bitmap_info.bmiHeader = bitmap_header;
-
-    let mut bits: *mut c_void = mem::zeroed();
-
-    //Create bitmap to color in
-    let bitmap_handle = wingdi::CreateDIBSection(general_dc,
-                             &bitmap_info,
-                             wingdi::DIB_RGB_COLORS, 
-                             &mut bits,
-                             null_mut(),
-                             0);
-
-
-    let compat_dc = wingdi::CreateCompatibleDC(general_dc);
-
-    //select CompatDC to draw in
-    wingdi::SelectObject(compat_dc, bitmap_handle as *mut c_void);
-
-    //winuser::FillRect(compat_dc,
-    //                  &window_rect,
-    //                  wingdi::GetStockObject(wingdi::BLACK_BRUSH as i32) as windef::HBRUSH);
-    //
-    wingdi::BitBlt(compat_dc, 0, 0, window_width, window_height, general_dc, 0, 0, wingdi::SRCCOPY);
-
-    //these are the pixels we are given access to
-    let pixels : *mut u32 = mem::transmute::<_, *mut u32>(bits);
-
-    for i in 0..window_height {
-        for j in 0..window_width {
-            //rippo pointer math
-            //*pixels.add((i * window_width + j) as usize) &= 0xffffffff;
-            *pixels.add((i * window_width + j) as usize) = 0xffffffff;
-        }
-    }
-
-    let mut blend_function = wingdi::BLENDFUNCTION {
-        BlendOp : wingdi::AC_SRC_OVER,
-        BlendFlags : 0,
-        SourceConstantAlpha : 255,
-        AlphaFormat : wingdi::AC_SRC_ALPHA,
-    };
-
-
-    let mut size = windef::SIZE {
-        cx : window_width,
-        cy : window_height,
-    };
-
-    let mut point = windef::POINT {
-        x : 0,
-        y : 0,
-    };
-
-
-    //Copy CompatDC to actual scren
-    //let ret_val = winuser::UpdateLayeredWindow(window_handle,
-    //                             general_dc,
-    //                             null_mut(),
-    //                             &mut size,
-    //                             compat_dc,
-    //                             &mut point,
-    //                             0,
-    //                             &mut blend_function,
-    //                             winuser::ULW_ALPHA);
-
-    //println!("retval {}", ret_val);
-    //if ret_val == 0 {
-    //    println!("last_error {}", Error::last_os_error());
-    //}
-
-    winuser::ReleaseDC(window_handle, compat_dc);
-    winuser::ReleaseDC(window_handle, general_dc);
-    wingdi::DeleteObject(bitmap_handle as *mut c_void);
-
-}
-
 
 unsafe fn on_activate(hwnd : windef::HWND) -> isize {
 
@@ -236,14 +130,14 @@ unsafe fn on_create(hwnd : windef::HWND, lparam : isize) -> isize {
 
     //Store &mut WindowState in window UserData.
     winuser::SetWindowLongPtrW(hwnd, winuser::GWLP_USERDATA, window_state_ptr as isize);
-    winuser::SetLayeredWindowAttributes(hwnd, 0x00696900, 0xff, winuser::LWA_COLORKEY);
+    winuser::SetLayeredWindowAttributes(hwnd, TRANSPARENCY_COLOR, 0xff, winuser::LWA_COLORKEY);
     0
 
 }
 
 //
 // Hit test the frame for resizing and moving.
-unsafe fn hit_test_nca(mouse_loc : &windef::POINT, window_rect : &windef::RECT, hwnd : windef::HWND, wparam : usize, lparam : isize) -> isize {
+unsafe fn hit_test_nca(mouse_loc : &windef::POINT, window_rect : &windef::RECT) -> isize {
     let mut frame_rect = mem::zeroed();
 
     winuser::AdjustWindowRectEx(&mut frame_rect,
@@ -282,24 +176,17 @@ unsafe fn hit_test_nca(mouse_loc : &windef::POINT, window_rect : &windef::RECT, 
 
 }
 
-unsafe fn on_up_nc(hwnd : windef::HWND, lparam : isize) -> isize {
+unsafe fn on_nc_up(hwnd : windef::HWND) -> isize {
 
     let window_state = tcast::<_, &mut WindowState>(winuser::GetWindowLongPtrW(hwnd, winuser::GWLP_USERDATA));
     //these are screen points
 
     if window_state.current_button == window_state.play_button {
         window_state.current_button = window_state.pause_button;
-
-        capture::start_recording(hwnd, window_state);
+        capture::start_recording(hwnd);
 
     } else {
         window_state.current_button = window_state.play_button;
-
-        //Stop Recording
-        //Set the Class value to None
-        window_state.capturer = None;
-
-        SHOULD_STOP.store(true, Ordering::Relaxed);
 
         //loop while the other thread hasn't responded.
         while SHOULD_STOP.load(Ordering::Relaxed) {
@@ -348,18 +235,15 @@ unsafe fn dwm_check(hwnd : windef::HWND,
         y : windowsx::GET_Y_LPARAM(lparam),
     };
 
-    let cx = window_rect.right - window_rect.left;
-
     if mouse_loc.x > (window_rect.left + 64) && mouse_loc.x < (window_rect.left + 112) &&
         (mouse_loc.y < (window_rect.top + 37) && mouse_loc.y > (window_rect.top +5)){
         return winuser::HTBORDER;
     }
 
-
     dwmapi::DwmDefWindowProc(hwnd, msg, wparam, lparam, &mut lresult);
 
     if lresult == 0 {
-        return hit_test_nca(&mouse_loc, &window_rect, hwnd, wparam, lparam);
+        return hit_test_nca(&mouse_loc, &window_rect);
     }
 
     lresult
@@ -402,7 +286,7 @@ unsafe extern "system" fn window_message_handler(hwnd : windef::HWND,
         winuser::WM_ACTIVATE => on_activate(hwnd),
         winuser::WM_NCCALCSIZE if wparam == 1 => on_nccalcsize(lparam),
         winuser::WM_PAINT => on_paint(hwnd),
-        winuser::WM_NCLBUTTONUP => on_up_nc(hwnd, lparam),
+        winuser::WM_NCLBUTTONUP => on_nc_up(hwnd),
         winuser::WM_EXITSIZEMOVE => on_stop_resize(hwnd),
         winuser::WM_NCHITTEST => dwm_check(hwnd, msg, wparam, lparam),
         _ => winuser::DefWindowProcW(hwnd, msg, wparam, lparam),
@@ -411,18 +295,19 @@ unsafe extern "system" fn window_message_handler(hwnd : windef::HWND,
 
 }
 
-fn main() {
+//almost everything interacting with win32 at this level is unsafe
+//so we're going to make main unsafe as otherwise the unsafe blocks 
+//become too verbose
+unsafe fn unsafe_main() {
 
     //rayon::ThreadPoolBuilder::new().num_threads(3).build_global().unwrap();
     //High res ICONs and High res Dialogs
-    unsafe { winuser::SetProcessDPIAware(); }
+    winuser::SetProcessDPIAware();
 
     let class_name = util::to_wstring("WinPeekClass");
     let window_name = util::to_wstring("WinPeek");
 
-    let brush = unsafe {
-            wingdi::CreateSolidBrush(0x00696900)
-    };
+    let brush = wingdi::CreateSolidBrush(TRANSPARENCY_COLOR);
 
     let wnd_class = winuser::WNDCLASSEXW {
         cbSize : size_of::<winuser::WNDCLASSEXW>() as u32,
@@ -439,16 +324,13 @@ fn main() {
         hIconSm : null_mut(),
     };
 
-    unsafe { 
-        if winuser::RegisterClassExW(&wnd_class) == 0 {
-            panic!("RegisterClass Failed");
-        }
-    };
+    if winuser::RegisterClassExW(&wnd_class) == 0 {
+        panic!("RegisterClass Failed");
+    }
 
-    let mut window_state = unsafe { WindowState::new() };
+    let mut window_state = WindowState::new();
 
-    let window_handle = unsafe {
-        winuser::CreateWindowExW(winuser::WS_EX_LAYERED,
+    let window_handle = winuser::CreateWindowExW(winuser::WS_EX_LAYERED,
                              class_name.as_ptr(),
                              window_name.as_ptr(),
                              winuser::WS_OVERLAPPEDWINDOW, 
@@ -459,13 +341,9 @@ fn main() {
                              null_mut(),
                              null_mut(),
                              null_mut(),
-                             mem::transmute::<&mut WindowState, *mut c_void>(&mut window_state))
-    };
+                             tcast::<&mut WindowState, *mut c_void>(&mut window_state));
 
-    unsafe {
         winuser::ShowWindow(window_handle, winuser::SW_SHOW);
-
-    }
 
     loop {
         if !handle_message(window_handle) {
@@ -474,3 +352,9 @@ fn main() {
     }
 
 }
+
+fn main() {
+    unsafe { unsafe_main(); }
+}
+
+
