@@ -5,16 +5,12 @@ use std::mem;
 use std::mem::transmute as tcast;
 use std::thread;
 use captrs::*;
-use std::sync::atomic::Ordering;
+use std::sync::{Arc, atomic::Ordering};
 use std::time::Duration;
 use winapi::shared::windef;
 use winapi::um::winuser;
-use image::codecs::gif as Igif;
-use image::ImageBuffer;
-use image::Rgba;
-use gif;
-use std::io::Write;
 use scrap;
+use mpeg_encoder;
 
 const TIME_SLEEP_FRAME : f64 = 1.0/60.0;
 
@@ -29,9 +25,7 @@ pub unsafe fn start_recording(hwnd : windef::HWND, window_state : &mut WindowSta
 
     let fake_hwnd : u64 = tcast::<windef::HWND, u64>(hwnd);
 
-    temp_path.push("recording.buffer");
-
-    let mut buffer_file = File::create(temp_path).unwrap();
+    temp_path.push("recording_buffer.mp4");
 
     thread::spawn(move || {
 
@@ -43,32 +37,15 @@ pub unsafe fn start_recording(hwnd : windef::HWND, window_state : &mut WindowSta
         let frame_height = (view_area.bottom - view_area.top) as u32;
 
         
-        //view_area.left += crate::LEFT_EXTEND;
-        //view_area.top += crate::TOP_EXTEND;
-
-        //view_area.right -= crate::RIGHT_EXTEND;
-        //view_area.bottom -= crate::BOTTOM_EXTEND;
-
-        //let mut capturer = Capturer::new(0).unwrap();
-        //let frame_other : Vec<Bgr8> = capturer.capture_frame().unwrap();
-        //println!("frame_other {:?}", frame_other.get(20).unwrap());
         let mut pd = scrap::Display::primary().unwrap();
         let mut capt = scrap::Capturer::new(pd).unwrap();
 
-        let cx = capt.width() as u16;
-        let cy = capt.height() as u16;
-        //let rows = (num_pixels / cx) as u32;
-        //let cols = (num_pixels / cy) as u32;
+        let cx = capt.width();
+        let cy = capt.height();
 
-        println!("cx {} cy {}", cx, cy);
+        let mut frames : Vec<Vec<u8>> = Vec::with_capacity(2);
 
-        let mut encoder = gif::Encoder::new(&mut buffer_file, cx, cy, &[]).unwrap();
-        //let mut encoder = Igif::GifEncoder::new(&mut buffer_file);
-        //let mut pixels : Vec<u8> = Vec::with_capacity((cx * cy * 3) as usize);
-
-        let mut frame_count = 0;
-        gif::Encoder::set_repeat(&mut encoder, gif::Repeat::Infinite).unwrap();
-        let mut frames : Vec<gif::Frame> = Vec::with_capacity(2);
+        let mut encoder = mpeg_encoder::Encoder::new(temp_path, cx, cy);
 
         loop {
 
@@ -86,24 +63,20 @@ pub unsafe fn start_recording(hwnd : windef::HWND, window_state : &mut WindowSta
                 chunk.swap(0,2);
             }
 
-            let mut cur_frame = gif::Frame::from_rgba_speed(cx as u16, cy as u16, &mut frame, 30); 
-            cur_frame.dispose = gif::DisposalMethod::Any;
+            frames.push(frame);
 
-            frames.push(cur_frame);
-            frame_count += 1;
-
-            if frame_count == 2 {
+            if frames.len() == 2 {
                 println!("lmao {}", frames.len());
-                for gif_frame in &mut frames {
-                    gif_frame.delay = 50;
-                    encoder.write_frame(gif_frame).unwrap();
+                for gif_frame in &frames {
+                    encoder.encode_rgba(cx, cy, gif_frame, false);
                 }
-                frame_count = 0;
+
                 frames.clear();
 
                 //Atomic bool is true therefore we should stop.
                 if crate::SHOULD_STOP.load(Ordering::Relaxed) {
 
+                    drop(encoder);
                     crate::SHOULD_STOP.store(false, Ordering::Relaxed);
                     println!("we're here fucker");
                     break;

@@ -307,12 +307,12 @@ unsafe fn on_up_nc(hwnd : windef::HWND, lparam : isize) -> isize {
         }
 
         let mut temp_path = temp_dir();
-        temp_path.push("recording.buffer");
+        temp_path.push("recording_buffer.mp4");
 
         let params = wfd::DialogParams {
             title: "Save as",
-            file_types: vec![("GIF", "*.gif")],
-            default_extension: "gif",
+            file_types: vec![("MP4", "*.mp4")],
+            default_extension: "mp4",
             ..Default::default()
         };
 
