@@ -83,21 +83,17 @@ pub unsafe fn start_recording(hwnd : windef::HWND) {
             });
 
 
-            for (idx, frame) in frames.iter().enumerate() {
-
-                if frame.len() == 0 {
-                    println!("frame len : {} {}", frame.len(), idx);
-                } else {
-                    encoder.encode_rgba(frame_width, frame_height, frame, false);
-                }
+            for frame in &frames{
+                encoder.encode_rgba(frame_width, frame_height, frame, false);
             }
 
             //Atomic bool is true therefore we should stop.
             if crate::SHOULD_STOP.load(Ordering::Relaxed) {
 
+                //drop encoder before letting other thread touch tmp file
+                //because encoder releases file.
                 drop(encoder);
                 crate::SHOULD_STOP.store(false, Ordering::Relaxed);
-                println!("we're here fucker");
                 break;
 
             }
@@ -134,6 +130,7 @@ pub unsafe fn start_recording(hwnd : windef::HWND) {
                     }
                 };
 
+                //equal distributition of captures a second.
                 frames[frame_count] = frame;
                 thread::sleep(Duration::from_millis(80));
             }

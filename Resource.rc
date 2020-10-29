@@ -1,5 +1,5 @@
-#define ShapesIcon 91
-#define LmaoIcon 101
+#define PlayIcon 91
+#define PauseIcon 101
 
-ShapesIcon ICON "lol.ico"
-LmaoIcon ICON "lmao.ico"
+PlayIcon ICON "PlayIcon.ico"
+PauseIcon ICON "PauseIcon.ico"

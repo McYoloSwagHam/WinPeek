@@ -166,6 +166,7 @@ unsafe fn hit_test_nca(mouse_loc : &windef::POINT, window_rect : &windef::RECT) 
         u_col = 2;
     }
 
+    //index position_table to find the cursor position.
     let position_table: [[isize; 3] ; 3] = [
         [winuser::HTTOPLEFT, if is_resize { winuser::HTTOP } else { winuser::HTCAPTION }, winuser::HTTOPRIGHT],
         [winuser::HTLEFT, winuser::HTNOWHERE, winuser::HTRIGHT],
@@ -184,10 +185,10 @@ unsafe fn on_nc_up(hwnd : windef::HWND) -> isize {
     if window_state.current_button == window_state.play_button {
         window_state.current_button = window_state.pause_button;
         capture::start_recording(hwnd);
-
     } else {
         window_state.current_button = window_state.play_button;
 
+        SHOULD_STOP.store(true, Ordering::Relaxed);
         //loop while the other thread hasn't responded.
         while SHOULD_STOP.load(Ordering::Relaxed) {
 
@@ -207,7 +208,6 @@ unsafe fn on_nc_up(hwnd : windef::HWND) -> isize {
 
         let target_path = dialog_result.selected_file_path;
 
-        //println!("temp_path {:?}\ntarget_path : {:?}", temp_path, target_path);
         rename(temp_path, target_path).unwrap();
         
 
@@ -277,10 +277,6 @@ unsafe extern "system" fn window_message_handler(hwnd : windef::HWND,
                                                  lparam : isize) -> isize {
 
 
-    //let mut lresult : isize = 0;
-    //dwmapi::DwmDefWindowProc(hwnd, msg, wparam, lparam, &mut lresult);
-    //println!("lresult : {}", lresult);
-
     match msg {
         winuser::WM_CREATE => on_create(hwnd, lparam),
         winuser::WM_ACTIVATE => on_activate(hwnd),
@@ -300,7 +296,9 @@ unsafe extern "system" fn window_message_handler(hwnd : windef::HWND,
 //become too verbose
 unsafe fn unsafe_main() {
 
-    //rayon::ThreadPoolBuilder::new().num_threads(3).build_global().unwrap();
+    //No idea how to set subsystem gui with cargo.
+    winapi::um::wincon::FreeConsole();
+
     //High res ICONs and High res Dialogs
     winuser::SetProcessDPIAware();
 
