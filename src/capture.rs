@@ -1,18 +1,19 @@
 use crate::WindowState;
 use std::env::{temp_dir};
-use std::fs::File;
 use std::mem;
 use std::mem::transmute as tcast;
 use std::thread;
-use captrs::*;
-use std::sync::{Arc, atomic::Ordering};
+use std::sync::{atomic::Ordering, mpsc::channel};
 use std::time::Duration;
 use winapi::shared::windef;
 use winapi::um::winuser;
 use scrap;
 use mpeg_encoder;
+use rayon::prelude::*;
+use ratelimit;
 
-const TIME_SLEEP_FRAME : f64 = 1.0/60.0;
+const FRAME_COUNT : usize = 10;
+
 
 // Start the recording here somehow
 // and also start streaming to tmp file?
@@ -27,69 +28,126 @@ pub unsafe fn start_recording(hwnd : windef::HWND, window_state : &mut WindowSta
 
     temp_path.push("recording_buffer.mp4");
 
+    let (tx, rx) = channel();
+
+    let cx = winuser::GetSystemMetrics(winuser::SM_CXSCREEN);
+
     thread::spawn(move || {
 
         let mut view_area : windef::RECT = mem::zeroed();
         winuser::GetWindowRect(tcast::<u64, windef::HWND>(fake_hwnd), &mut  view_area);
 
         //subtract the fake client area from the actual view area
-        let frame_width = (view_area.right - view_area.left) as u32;
-        let frame_height = (view_area.bottom - view_area.top) as u32;
-
+        let frame_width = (view_area.right - view_area.left - crate::LEFT_EXTEND - crate::RIGHT_EXTEND) as usize;
+        let frame_height = (view_area.bottom - view_area.top - crate::TOP_EXTEND - crate::BOTTOM_EXTEND) as usize;
         
-        let mut pd = scrap::Display::primary().unwrap();
-        let mut capt = scrap::Capturer::new(pd).unwrap();
+        //Move view area to account for margins.
+        view_area.left += crate::LEFT_EXTEND;
+        view_area.right -= crate::RIGHT_EXTEND;
 
-        let cx = capt.width();
-        let cy = capt.height();
-
-        let mut frames : Vec<Vec<u8>> = Vec::with_capacity(2);
-
-        let mut encoder = mpeg_encoder::Encoder::new(temp_path, cx, cy);
+        view_area.top += crate::TOP_EXTEND;
+        view_area.bottom -= crate::BOTTOM_EXTEND;
+        
+        let receiver = rx;
+        let mut encoder = mpeg_encoder::Encoder::new_with_params(temp_path, frame_width, frame_height, None, Some((1, FRAME_COUNT)), None, None, None);
 
         loop {
 
-            //println!("rect {} {} {} {}", view_area.left, view_area.top, view_area.right, view_area.bottom);
-            let mut frame : Vec<u8> = loop {
-                match capt.frame() {
-                    Ok(frame) => { break frame.to_vec(); },
-                    Err(_) => continue,
+            let mut frames : [Vec<u8>; FRAME_COUNT] = receiver.recv().unwrap();
+
+            frames.par_iter_mut().for_each(|frame| {
+
+                let mut idx = 0;
+                frame.retain(|_| {
+
+                    let rows = ((idx/4) / cx) as i32;
+                    let cols = ((idx/4) % cx) as i32;
+
+                    idx += 1;
+
+                    if (view_area.left <= cols && cols < view_area.right) && (view_area.top <= rows && rows < view_area.bottom) {
+                        true
+                    } else { 
+                        false
+                    }
+
+                });
+
+                for chunk in frame.chunks_exact_mut(4) {
+                    chunk.swap(0,2);
                 }
-            };
 
-            println!("sanity3");
 
-            for chunk in frame.chunks_exact_mut(4) {
-                chunk.swap(0,2);
+            });
+
+
+            for (idx, frame) in frames.iter().enumerate() {
+
+                if frame.len() == 0 {
+                    println!("frame len : {} {}", frame.len(), idx);
+                } else {
+                    encoder.encode_rgba(frame_width, frame_height, frame, false);
+                }
             }
 
-            frames.push(frame);
+            //Atomic bool is true therefore we should stop.
+            if crate::SHOULD_STOP.load(Ordering::Relaxed) {
 
-            if frames.len() == 2 {
-                println!("lmao {}", frames.len());
-                for gif_frame in &frames {
-                    encoder.encode_rgba(cx, cy, gif_frame, false);
-                }
-
-                frames.clear();
-
-                //Atomic bool is true therefore we should stop.
-                if crate::SHOULD_STOP.load(Ordering::Relaxed) {
-
-                    drop(encoder);
-                    crate::SHOULD_STOP.store(false, Ordering::Relaxed);
-                    println!("we're here fucker");
-                    break;
-
-                }
+                drop(encoder);
+                crate::SHOULD_STOP.store(false, Ordering::Relaxed);
+                println!("we're here fucker");
+                break;
 
             }
-
 
         }
 
+    });
+
+
+    //recording thread
+    thread::spawn(move || {
+        
+        let pd = scrap::Display::primary().unwrap();
+        let mut capt = scrap::Capturer::new(pd).unwrap();
+
+        let transmitter = tx;
+
+        let mut ratelimit = ratelimit::Builder::new()
+            .capacity(1)
+            .quantum(1)
+            .interval(Duration::new(1, 0))
+            .build();
+
+        loop {
+
+            let mut frames : [Vec<u8>; FRAME_COUNT] = Default::default();
+
+            for frame_count in 0..FRAME_COUNT {
+
+                let frame : Vec<u8> = loop {
+                    match capt.frame() {
+                        Ok(frame) => { break frame.to_vec(); },
+                        Err(_) => continue,
+                    }
+                };
+
+                frames[frame_count] = frame;
+                thread::sleep_ms(80);
+            }
+
+            transmitter.send(frames).unwrap();
+
+            if crate::SHOULD_STOP.load(Ordering::Relaxed) {
+                break;
+            }
+
+            ratelimit.wait();
+
+        }
 
     });
+
 
 
 }

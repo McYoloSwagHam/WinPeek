@@ -19,3 +19,5 @@ captrs = "0.2.3"
 wfd = "0.1.4"
 scrap = "0.5"
 mpeg_encoder = { path = "mpeg_encoder" }
+rayon = "1.5.0"
+ratelimit = "0.4.4"

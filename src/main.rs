@@ -413,6 +413,7 @@ unsafe extern "system" fn window_message_handler(hwnd : windef::HWND,
 
 fn main() {
 
+    //rayon::ThreadPoolBuilder::new().num_threads(3).build_global().unwrap();
     //High res ICONs and High res Dialogs
     unsafe { winuser::SetProcessDPIAware(); }
 
