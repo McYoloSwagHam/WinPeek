@@ -5,11 +5,14 @@ use std::mem::{self, size_of};
 use winapi::um::{libloaderapi, winuser, wingdi, uxtheme, dwmapi};
 use winapi::shared::{windef, windowsx};
 use winapi::ctypes::c_void;
-use std::sync::{atomic::{AtomicBool, Ordering}};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::mem::transmute as tcast;
-use std::fs::rename;
+use std::fs::{remove_file, rename};
 use std::env::temp_dir;
+use std::path::PathBuf;
 use wfd;
+use rand::Rng;
+use rand::distributions::Alphanumeric;
 
 //Little endian set the last byte
 // R  G  B  A
@@ -34,6 +37,7 @@ pub struct WindowState {
     play_button : windef::HICON,
     pause_button: windef::HICON,
     current_button : windef::HICON,
+    fp : PathBuf,
 }
 
 impl WindowState {
@@ -60,10 +64,21 @@ impl WindowState {
             ICON_SIZE,
             0) as windef::HICON;
 
+        let mut temp_path = temp_dir();
+
+        let mut random_file_name : String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(8)
+            .collect();
+
+        random_file_name.push_str(".mp4");
+        temp_path.push(random_file_name); 
+
         WindowState {
             play_button,
             pause_button,
             current_button : play_button,
+            fp : temp_path,
         }
 
     }
@@ -183,19 +198,19 @@ unsafe fn on_nc_up(hwnd : windef::HWND) -> isize {
     //these are screen points
 
     if window_state.current_button == window_state.play_button {
+
         window_state.current_button = window_state.pause_button;
-        capture::start_recording(hwnd);
+        capture::start_recording(hwnd, window_state.fp.clone());
+
     } else {
         window_state.current_button = window_state.play_button;
 
         SHOULD_STOP.store(true, Ordering::Relaxed);
+
         //loop while the other thread hasn't responded.
         while SHOULD_STOP.load(Ordering::Relaxed) {
 
         }
-
-        let mut temp_path = temp_dir();
-        temp_path.push("recording_buffer.mp4");
 
         let params = wfd::DialogParams {
             title: "Save as",
@@ -204,13 +219,19 @@ unsafe fn on_nc_up(hwnd : windef::HWND) -> isize {
             ..Default::default()
         };
 
-        let dialog_result = wfd::save_dialog(params).unwrap();
+        let dialog_result = wfd::save_dialog(params);
 
-        let target_path = dialog_result.selected_file_path;
+        match dialog_result {
+            Ok(dialog_result) => {
 
-        rename(temp_path, target_path).unwrap();
-        
+                let target_path = dialog_result.selected_file_path;
+                rename(&window_state.fp, target_path).unwrap();
 
+            },
+            Err(_) => {
+                remove_file(&window_state.fp).unwrap();
+            }
+        }
     }
 
     winuser::RedrawWindow(hwnd, null_mut(), null_mut(), winuser::RDW_INVALIDATE | winuser::RDW_ERASE);
@@ -328,7 +349,7 @@ unsafe fn unsafe_main() {
 
     let mut window_state = WindowState::new();
 
-    let window_handle = winuser::CreateWindowExW(winuser::WS_EX_LAYERED,
+    let window_handle = winuser::CreateWindowExW(winuser::WS_EX_LAYERED | winuser::WS_EX_TOPMOST,
                              class_name.as_ptr(),
                              window_name.as_ptr(),
                              winuser::WS_OVERLAPPEDWINDOW, 

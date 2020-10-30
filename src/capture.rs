@@ -1,9 +1,9 @@
-use std::env::{temp_dir};
 use std::mem;
 use std::mem::transmute as tcast;
 use std::thread;
 use std::sync::{atomic::Ordering, mpsc::channel};
 use std::time::Duration;
+use std::path::PathBuf;
 use winapi::shared::windef;
 use winapi::um::winuser;
 use scrap;
@@ -16,19 +16,12 @@ const FRAME_COUNT : usize = 10;
 
 // Start the recording here somehow
 // and also start streaming to tmp file?
-pub unsafe fn start_recording(hwnd : windef::HWND) {
-
-    //Create a temp file to which we stream the video data
-    //Then if the user decides to save, we move that file to the loc
-    //otherwise we just delete the temporary file.
-    let mut temp_path = temp_dir();
+pub unsafe fn start_recording(hwnd : windef::HWND, fp : PathBuf) {
 
     //cast hwnd to u64 because it actually is Send + Sync
     //since even though by typedef it is a pointer it is
     //actually an integer handle, so it can be copied.
     let fake_hwnd : u64 = tcast::<windef::HWND, u64>(hwnd);
-
-    temp_path.push("recording_buffer.mp4");
 
     let (tx, rx) = channel();
 
@@ -51,7 +44,7 @@ pub unsafe fn start_recording(hwnd : windef::HWND) {
         view_area.bottom -= crate::BOTTOM_EXTEND;
         
         let receiver = rx;
-        let mut encoder = mpeg_encoder::Encoder::new_with_params(temp_path, frame_width, frame_height, None, Some((1, FRAME_COUNT)), None, None, None);
+        let mut encoder = mpeg_encoder::Encoder::new_with_params(fp, frame_width, frame_height, None, Some((1, FRAME_COUNT)), None, None, None);
 
         loop {
 

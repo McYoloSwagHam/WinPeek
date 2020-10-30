@@ -21,3 +21,4 @@ scrap = "0.5"
 mpeg_encoder = { path = "mpeg_encoder" }
 rayon = "1.5.0"
 ratelimit = "0.4.4"
+rand = "0.7.3"
