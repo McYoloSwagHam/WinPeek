@@ -5,7 +5,7 @@
 WinPeek recording itself!
 
 ## About
-WinPeek is a rust application written using low-level Win32 API calls, in an attempt to mimic the Peek application in linux
+WinPeek is a rust application written using low-level Win32 API calls, in an attempt to mimic the Peek application for linux
 
 ## Building
 Building this requires you link against FFMPEG, because MPEG encoder uses ffmpeg internally.
