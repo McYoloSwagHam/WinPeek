@@ -201,9 +201,11 @@ unsafe fn on_nc_up(hwnd : windef::HWND) -> isize {
 
         window_state.current_button = window_state.pause_button;
         capture::start_recording(hwnd, window_state.fp.clone());
+        winuser::SetWindowPos(hwnd, winuser::HWND_TOPMOST, 0, 0, 0, 0, winuser::SWP_NOMOVE | winuser::SWP_NOSIZE);
 
     } else {
         window_state.current_button = window_state.play_button;
+        winuser::SetWindowPos(hwnd, winuser::HWND_NOTOPMOST, 0, 0, 0, 0, winuser::SWP_NOMOVE | winuser::SWP_NOSIZE);
 
         SHOULD_STOP.store(true, Ordering::Relaxed);
 
